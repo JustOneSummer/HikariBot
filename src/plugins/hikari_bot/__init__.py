@@ -3,6 +3,7 @@ import os
 import platform
 import re
 import sys
+import threading
 import traceback
 from collections import defaultdict, namedtuple
 
@@ -30,7 +31,7 @@ from nonebot.plugin.on import on_notice
 from nonebot_plugin_guild_patch import GuildMessageEvent
 
 from .data_source import dir_path, nb2_file, template_path
-from .game.minimap_renderer import get_file, get_rep
+from .game.minimap_renderer import get_file, get_rep, consumer_queue, MinimapRendererQueueData
 from .game.ocr import (
     downlod_OcrResult,
     get_Random_Ocr_Pic,
@@ -79,7 +80,7 @@ async def main(bot: Bot, ev: MessageEvent, matchmsg: Message = CommandArg()):  #
     try:
         server_type = None
         if isinstance(ev, PrivateMessageEvent) and (
-            driver.config.private or str(ev.user_id) in driver.config.superusers
+                driver.config.private or str(ev.user_id) in driver.config.superusers
         ):  # 私聊事件,superusers默认不受影响
             server_type = 'QQ'
         elif isinstance(ev, GroupMessageEvent) and driver.config.group and ev.group_id not in driver.config.ban_group_list:  # 群聊事件
@@ -195,10 +196,11 @@ async def GROUP_FILE_listen(bot: Bot, ev: NoticeEvent):
         else:
             base64_file = await bot.get_image(file=ev.file.id)
             if not str(base64_file).__contains__("'base64':"):
-                await get_rep(base64_file['url'], bot, ev)
+                data_file = base64_file['url']
             else:
                 # 带编码格式处理
-                await get_rep(base64_file['base64'], bot, ev)
+                data_file = base64_file['base64']
+            await get_rep(data_file, bot, ev)
     except Exception:
         logger.error(traceback.format_exc())
         await bot.send(ev, MessageSegment.text('请求minimap_renderer服务异常'))
@@ -302,6 +304,11 @@ async def startup():
 async def remind(bot: Bot):
     superid = driver.config.superusers
     await bot.get_login_info()
+    bot_id = bot.self_id
+    th = threading.Thread(target=consumer_queue, args=(bot_id,))
+    th.daemon = True
+    th.start()
+    MinimapRendererQueueData.ON_STATUS = 1
     for each in superid:
         await bot.send_private_msg(user_id=int(each), message=f'Hikari已上线，当前BOT版本{__bot_version__},内核版本{__version__}')
 
