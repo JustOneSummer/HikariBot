@@ -1,17 +1,19 @@
 import asyncio
 import base64
+import functools
 import hashlib
 import os
+from asyncio import Future
+from concurrent.futures import ProcessPoolExecutor
 
 import requests
 from nonebot import get_driver
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment, NoticeEvent, Message
 from requests.auth import HTTPBasicAuth
-from concurrent.futures import ThreadPoolExecutor
 
 driver = get_driver()
 minimap_renderer_temp = "minimap_renderer_temp"
-executor = ThreadPoolExecutor()
+executor = ProcessPoolExecutor(max_workers=10)
 
 
 async def get_rep(wows_rep_file_base64: str, bot: Bot, ev: NoticeEvent):
@@ -32,28 +34,29 @@ async def get_rep(wows_rep_file_base64: str, bot: Bot, ev: NoticeEvent):
         await bot.send(ev, MessageSegment.text("文件不存在，ll和nc 部署的请检查服务是否在一个服务器上，否则请开启base64功能"))
     else:
         await bot.send(ev, MessageSegment.text("正在处理replays文件.预计耗时1分钟"))
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(executor, lambda: upload_http(wowsrepla_file))
-        if result is None:
-            await bot.send(ev, MessageSegment.text("生成视频文件异常！请检查 minimap_renderer 是否要更新."))
-        else:
-            await send_video(bot, ev, result)
+        group_id = int(ev.group_id)
+        fr = executor.submit(functools.partial(upload_http, wowsrepla_file=wowsrepla_file))
+        fr.add_done_callback(lambda future: send_video_call(bot=bot, group_id=group_id, future=future))
 
 
-def upload_http(wowsrepla_file: str):
+def upload_http(wowsrepla_file: str) -> str:
     upload_url = driver.config.minimap_renderer_url + "/upload_replays_video_url"
     with open(wowsrepla_file, 'rb') as file:
         files = {'file': file}
         response = requests.post(upload_url, files=files, auth=HTTPBasicAuth(driver.config.minimap_renderer_user_name, driver.config.minimap_renderer_password), timeout=600)
         if response.status_code == 200:
             return response.text
-    return None
+    return ""
 
 
-async def send_video(bot: Bot, ev: NoticeEvent, url: str):
-    # 构造视频文件消息
-    data = str(driver.config.minimap_renderer_url + "/video_url?file_name=" + url.replace("\"", ""))
-    await  bot.send_group_msg(group_id=int(ev.group_id), message=Message(MessageSegment.video(data)))
+def send_video_call(bot: Bot, group_id: int, future: Future):
+    url = future.result()
+    if url == "":
+        asyncio.run(bot.send_group_msg(group_id=group_id, message=Message(MessageSegment.text("生成视频文件异常！请检查 minimap_renderer 是否要更新."))))
+    else:
+        # 构造视频文件消息
+        data = str(driver.config.minimap_renderer_url + "/video_url?file_name=" + url.replace("\"", ""))
+        asyncio.run(bot.send_group_msg(group_id=group_id, message=Message(MessageSegment.video(data))))
 
 
 def get_file(url: str):

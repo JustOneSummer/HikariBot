@@ -1,7 +1,7 @@
 @echo off
 
 python --version 3>NUL 
-if errorlevel 1 goto errorNoPython 
+if errorlevel 1 goto errorNoPython
 
 echo installing Nonebot and Hikari
 python -m pip install nb-cli hikari-bot nonebot-plugin-apscheduler nonebot-plugin-gocqhttp -i https://pypi.tuna.tsinghua.edu.cn/simple
